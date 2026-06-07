@@ -1,0 +1,10 @@
+name: a0_scribe
+title: Scribe (Super-Ego)
+description: Background local documentation & workflow-oversight layer. A separate local "scribe" model (served by a0_lmm_router under the 'scribe' role) observes the chat agent and auto-fills a0_pen_paper sessions, without spending the chat/API budget.
+version: 0.1.0
+author: "frantz"
+settings_sections:
+  - agent
+per_project_config: true
+per_agent_config: true
+always_enabled: false

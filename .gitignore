@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+execute_record.json
+config.json
+.toggle-0
+.toggle-1

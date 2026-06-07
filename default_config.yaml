@@ -1,0 +1,31 @@
+# a0_scribe — the Scribe super-ego.
+# A separate local model (router role "scribe") observes the chat agent and
+# auto-documents it into a0_pen_paper, in the background, on local compute.
+
+enabled: true
+
+# observe  → only watch + document (the only level implemented in v0.1)
+# nudge    → also inject advisory reminders into the ego's next turn (planned)
+# enforce  → also flag workflow deviations (planned, soft enforcement)
+authority_level: observe
+
+# Router role used for scribe inference (see a0_lmm_router conf).
+model_role: scribe
+
+observe:
+  debounce_seconds: 4        # batch the agent's tool calls over this quiet window
+  max_batch: 12              # max observations summarized in one scribe call
+  max_queue: 1000            # bounded queue; oldest observations drop under load
+  ignore_tools: [response, scribe]   # don't document the responder or the scribe itself
+
+budget:
+  max_calls_per_chat: 500    # runaway guard (per process), not a normal limit
+  max_tokens_per_call: 512
+  temperature: 0.3
+
+session:
+  name_prefix: scribe        # per-chat session name when the agent has none
+  default_section: execution_log
+  prefer_chat_focus: true    # write into the agent's focused session if one exists
+
+runtime_dir: usr/scribe
