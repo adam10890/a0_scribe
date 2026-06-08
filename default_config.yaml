@@ -4,9 +4,9 @@
 
 enabled: true
 
-# observe  → only watch + document (the only level implemented in v0.1)
-# nudge    → also inject advisory reminders into the ego's next turn (planned)
-# enforce  → also flag workflow deviations (planned, soft enforcement)
+# observe  → only watch + document
+# nudge    → also inject advisory reminders into the ego's next turn (Phase D)
+# enforce  → also flag workflow deviations before tools run (Phase E, soft)
 authority_level: observe
 
 # Router role used for scribe inference (see a0_lmm_router conf).
@@ -27,5 +27,10 @@ session:
   name_prefix: scribe        # per-chat session name when the agent has none
   default_section: execution_log
   prefer_chat_focus: true    # write into the agent's focused session if one exists
+
+# Phase D/E feedback to the ego (only active at authority_level nudge/enforce).
+feedback:
+  max_pending_per_chat: 5    # cap staged nudges/deviations per chat
+  inject_max_per_turn: 3     # max injected into one ego turn
 
 runtime_dir: usr/scribe
