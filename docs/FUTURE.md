@@ -1,22 +1,26 @@
 # a0_scribe — Future development
 
-## Authority phases (beyond v0.1 "observe")
+## Authority phases — IMPLEMENTED
 
-v0.1 ships **observe** only: the scribe watches and documents. The design
-supports two further authority levels, gated by `authority_level` in
-`default_config.yaml` and always keeping the ego able to override:
+All three authority levels are now live (set `authority_level` in
+`default_config.yaml`); the ego always retains the ability to override:
 
-- **nudge** — the scribe stages advisory reminders ("you never recorded the result
-  of step 3") and injects them into the ego's *next* prompt via a
-  `message_loop_prompts_after` extension. Advisory only.
-- **enforce** — the scribe consults `a0_pen_paper`'s `WorkflowExecutor` to detect
-  deviations from a registered workflow (research / debugging / validation) and
-  injects a corrective note via a `tool_execute_before` extension. Soft
-  enforcement first; hard blocking stays opt-in behind a toggle.
+- **observe** (default) — watch and document only.
+- **nudge** (Phase D) — the background worker emits an optional `NUDGE:` line; it is
+  staged in `feedback_bus` and injected into the ego's *next* prompt via the
+  `message_loop_prompts_after/_61_scribe_nudge.py` extension
+  (`loop_data.extras_temporary`). Advisory only.
+- **enforce** (Phase E) — the worker emits an optional `DEVIATION:` line (judged off
+  the ego's critical path); `tool_execute_before/_55_scribe_enforce.py` injects it as a
+  corrective `agent.hist_add_warning` before the next tool. SOFT enforcement — it
+  advises, it does not block. Hard blocking remains opt-in for the future.
 
-Each escalation must preserve the guardrails: local-only, budget-capped, fully
-transparent (every action written to Pen & Paper with `author="scribe"`), and
-overridable by the ego/user.
+Guardrails preserved at every level: local-only, budget-capped, bounded feedback
+(`feedback.max_pending_per_chat` / `inject_max_per_turn`), fully transparent (every
+nudge/deviation is also written to Pen & Paper with `author="scribe"`), and overridable
+by the ego/user. A future step could add true hard-blocking (veto a tool) behind an
+explicit toggle, and per-chat active-workflow tracking via `a0_pen_paper`'s
+`WorkflowExecutor` for sharper deviation detection.
 
 ## Dependency: LMM Router multi-container fleet orchestration
 

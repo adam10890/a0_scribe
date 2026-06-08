@@ -75,7 +75,19 @@ See `default_config.yaml`. Key knobs: `enabled`, `authority_level`,
 - **Transparent** — every entry is tagged `author="scribe"`, fully auditable.
 - **Kill-switch** — `enabled: false` stops it instantly.
 
+## Authority levels
+
+All three are implemented (`authority_level` in `default_config.yaml`); the ego always
+retains control:
+
+- **observe** (default) — document only.
+- **nudge** — advisory reminders injected into the ego's next prompt.
+- **enforce** — soft workflow-deviation corrections injected before tools run (advisory,
+  non-blocking).
+
+Every nudge/deviation is also written to Pen & Paper (`author="scribe"`) for audit.
+
 ## Future development
 
-See [docs/FUTURE.md](docs/FUTURE.md) — authority phases (nudge / enforce) and the
-LMM Router multi-container fleet orchestration that scribe will build on.
+See [docs/FUTURE.md](docs/FUTURE.md) — hard-blocking enforcement (opt-in) and the LMM
+Router multi-container fleet orchestration that scribe will build on.

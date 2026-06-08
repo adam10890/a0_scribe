@@ -36,6 +36,10 @@ DEFAULTS: dict[str, Any] = {
         "default_section": "execution_log",
         "prefer_chat_focus": True,
     },
+    "feedback": {
+        "max_pending_per_chat": 5,
+        "inject_max_per_turn": 3,
+    },
     "runtime_dir": "usr/scribe",
 }
 
