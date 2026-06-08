@@ -19,12 +19,14 @@ Guardrails preserved at every level: local-only, budget-capped, bounded feedback
 (`feedback.max_pending_per_chat` / `inject_max_per_turn`), fully transparent (every
 nudge/deviation is also written to Pen & Paper with `author="scribe"`), and overridable
 by the ego/user. A future step could add true hard-blocking (veto a tool) behind an
-explicit toggle, and per-chat active-workflow tracking via `a0_pen_paper`'s
-`WorkflowExecutor` for sharper deviation detection.
+explicit toggle. Per-chat active-workflow tracking now lives in Pen & Paper
+State-DOX (`state/session_state.yaml` plus `state/workflows/*.yaml`); future
+deviation detection should read that state rather than keeping a separate
+workflow tracker.
 
 ## Dependency: LMM Router multi-container fleet orchestration
 
-The scribe currently runs as one dedicated container (`scribe_gpu`, gemma-4-8b,
+The scribe currently runs as one dedicated container (`scribe_gpu`, gemma-4-E4B,
 2 parallel sequences). It will benefit directly from a planned `a0_lmm_router`
 capability:
 

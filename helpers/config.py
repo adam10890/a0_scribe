@@ -40,6 +40,10 @@ DEFAULTS: dict[str, Any] = {
         "max_pending_per_chat": 5,
         "inject_max_per_turn": 3,
     },
+    "state": {
+        "inject_working_state": True,
+        "prompt_max_chars": 2500,
+    },
     "runtime_dir": "usr/scribe",
 }
 

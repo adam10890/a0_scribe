@@ -33,4 +33,8 @@ feedback:
   max_pending_per_chat: 5    # cap staged nudges/deviations per chat
   inject_max_per_turn: 3     # max injected into one ego turn
 
+state:
+  inject_working_state: true # inject compact Pen & Paper state, not raw events
+  prompt_max_chars: 2500
+
 runtime_dir: usr/scribe
