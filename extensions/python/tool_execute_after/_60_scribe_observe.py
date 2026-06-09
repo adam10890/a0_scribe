@@ -34,6 +34,8 @@ _SIGNAL_TERMS = (
     "exit code",
     "syntaxerror",
     "assertionerror",
+    "scribe_tags",
+    "state_dox_tags",
     " ok",
     "... ok",
 )

@@ -118,6 +118,16 @@ Event tags are command/outcome-aware:
   outcome. A file that contains words such as `Exception`, `failed`, or
   `tool_error` must not trigger debugging unless the command itself failed or
   was an explicit verification/test command.
+- UI-published workflows may define custom activation tags. Scribe adds those
+  tags when they are emitted as explicit evidence (`SCRIBE_TAGS: tag_name` or
+  `STATE_DOX_TAGS: tag_name`) or as exact keywords in non-read-only activity.
+  Source reads do not activate custom tags merely because a file contains the
+  tag string.
+- Reads of State-DOX artifacts (`state/events.jsonl`,
+  `state/session_state.yaml`, `state/workflows/*`) are treated as audit events:
+  they can be logged, but they do not replace the current active workflow focus.
+- If a workflow declares a missing Scribe skill, Scribe falls back to
+  `scribe-core` and records a warning in the active skill/workflow state.
 
 The observer preserves tool command metadata from
 `agent.loop_data.current_tool.args` because Agent Zero after-tool extensions do

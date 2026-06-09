@@ -237,6 +237,28 @@ class StateTrackingTests(unittest.TestCase):
         self.assertNotIn("verification", event["tags"])
         self.assertNotIn("test_result", event["tags"])
 
+    def test_state_artifact_audit_does_not_route_to_research(self):
+        event = state_events.normalize_observation(
+            {
+                "chat_id": "chat-1",
+                "tool_name": "code_execution_tool",
+                "args_digest": (
+                    "tail -1 /a0/usr/pen_and_paper/sessions/active/"
+                    "scribe_publish_contract_regression_002/state/events.jsonl && "
+                    "cat /a0/usr/pen_and_paper/sessions/active/"
+                    "scribe_publish_contract_regression_002/state/session_state.yaml"
+                ),
+                "result_digest": (
+                    '{"tags":["code_review_trigger","tool_call"]}\n'
+                    "active_workflows:\n- id: code_review_runtime\n"
+                ),
+            }
+        )
+
+        self.assertIn("state_audit", event["tags"])
+        self.assertNotIn("research", event["tags"])
+        self.assertEqual(state_events.select_workflows(event, state_events.workflow_ids()), [])
+
     def test_find_output_is_research_even_when_command_metadata_is_missing(self):
         event = state_events.normalize_observation(
             {
@@ -403,6 +425,36 @@ class StateTrackingTests(unittest.TestCase):
         self.assertIn("py_compile", digest)
         self.assertIn("No such file", digest)
 
+    def test_observer_digest_preserves_scribe_tags_in_long_output(self):
+        observe_path = (
+            ROOT
+            / "usr"
+            / "plugins"
+            / "a0_scribe"
+            / "extensions"
+            / "python"
+            / "tool_execute_after"
+            / "_60_scribe_observe.py"
+        )
+        spec = importlib.util.spec_from_file_location("scribe_observe_tags", observe_path)
+        module = importlib.util.module_from_spec(spec)
+        helpers_mod = types.ModuleType("helpers")
+        extension_mod = types.ModuleType("helpers.extension")
+        extension_mod.Extension = type("Extension", (), {})
+        sys.modules.setdefault("helpers", helpers_mod)
+        sys.modules.setdefault("helpers.extension", extension_mod)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        long_output = "noise " * 400
+        long_output += " SCRIBE_TAGS: code_review_trigger "
+        long_output += "more noise " * 400
+
+        digest = module._digest(long_output, limit=400)
+
+        self.assertIn("SCRIBE_TAGS", digest)
+        self.assertIn("code_review_trigger", digest)
+
     def test_observer_digest_prefers_latest_activity_block(self):
         observe_path = (
             ROOT
@@ -557,6 +609,19 @@ class StateTrackingTests(unittest.TestCase):
 
         self.assertEqual(list(patches), ["debugging"])
 
+    def test_worker_routing_uses_latest_routing_event_not_state_audit(self):
+        active, trigger = scribe_worker._routing_decision(
+            [
+                {"id": 1, "tags": ["code_review_trigger", "tool_call"], "summary": "trigger"},
+                {"id": 2, "tags": ["state_audit", "tool_call"], "summary": "audit"},
+            ],
+            ["code_review_runtime"],
+            {"code_review_runtime": {"code_review_trigger"}},
+        )
+
+        self.assertEqual(active, ["code_review_runtime"])
+        self.assertEqual(trigger["id"], 1)
+
     def test_render_working_state_prompt_is_compact_and_omits_events(self):
         rendered = state_prompt.render_working_state(
             {
@@ -572,6 +637,186 @@ class StateTrackingTests(unittest.TestCase):
         self.assertIn("preserve state", rendered)
         self.assertIn("verification", rendered)
         self.assertNotIn("events.jsonl", rendered)
+
+
+class DataDrivenWorkflowMapTests(unittest.TestCase):
+    """PR1a: state_events loads workflow maps from Pen & Paper with built-in fallback."""
+
+    _BUILTINS = {"planning", "implementation", "debugging", "verification", "research"}
+
+    def setUp(self):
+        state_events.invalidate_workflow_cache()
+
+    def tearDown(self):
+        state_events.invalidate_workflow_cache()
+
+    def _patch_pp(self, fn):
+        original = state_events._pp_state_dox_templates
+        state_events._pp_state_dox_templates = fn
+        state_events.invalidate_workflow_cache()
+        self.addCleanup(state_events.invalidate_workflow_cache)
+        self.addCleanup(
+            lambda: setattr(state_events, "_pp_state_dox_templates", original)
+        )
+
+    def test_workflow_ids_includes_runtime_published_template(self):
+        self._patch_pp(
+            lambda: [
+                {
+                    "id": "code_review",
+                    "activation_tags": ["implementation", "file_change"],
+                    "skill": "scribe-core",
+                }
+            ]
+        )
+        ids = state_events.workflow_ids()
+        self.assertIn("code_review", ids)
+        self.assertIn("debugging", ids)  # built-in still present
+
+    def test_select_workflows_activates_runtime_id_from_tags(self):
+        self._patch_pp(
+            lambda: [
+                {
+                    "id": "code_review",
+                    "activation_tags": ["implementation"],
+                    "skill": "scribe-core",
+                }
+            ]
+        )
+        event = {"tags": ["implementation", "tool_call"]}
+        active = state_events.select_workflows(event, state_events.workflow_ids())
+        self.assertIn("code_review", active)
+
+    def test_workflow_maps_fall_back_to_defaults_when_pp_raises(self):
+        def boom():
+            raise ImportError("a0_pen_paper missing")
+
+        self._patch_pp(boom)
+        self.assertEqual(set(state_events.workflow_ids()), self._BUILTINS)
+        self.assertIn("tool_error", state_events.workflow_tags()["debugging"])
+
+    def test_resolve_skill_falls_back_to_scribe_core_for_missing(self):
+        self.assertEqual(
+            state_events._resolve_skill("code_review", "nonexistent-skill"),
+            "scribe-core",
+        )
+
+    def test_resolve_skill_keeps_existing_declared_skill(self):
+        self.assertEqual(
+            state_events._resolve_skill("debugging", "scribe-workflow-debugging"),
+            "scribe-workflow-debugging",
+        )
+
+    def test_invalidate_then_reload_picks_up_new_template(self):
+        self._patch_pp(lambda: [])
+        self.assertNotIn("code_review", state_events.workflow_ids())
+        state_events._pp_state_dox_templates = lambda: [
+            {"id": "code_review", "activation_tags": ["implementation"], "skill": None}
+        ]
+        state_events.invalidate_workflow_cache()
+        self.assertIn("code_review", state_events.workflow_ids())
+
+    def test_normalize_observation_adds_runtime_activation_tag_from_explicit_signal(self):
+        self._patch_pp(
+            lambda: [
+                {
+                    "id": "code_review_runtime",
+                    "activation_tags": ["code_review_trigger"],
+                    "skill": "scribe-workflow-code-review-missing",
+                }
+            ]
+        )
+
+        event = state_events.normalize_observation(
+            {
+                "chat_id": "chat-1",
+                "tool_name": "code_execution_tool",
+                "args_digest": "echo 'SCRIBE_TAGS: code_review_trigger'",
+                "result_digest": "SCRIBE_TAGS: code_review_trigger",
+            }
+        )
+        active = state_events.select_workflows(event, state_events.workflow_ids())
+
+        self.assertIn("code_review_trigger", event["tags"])
+        self.assertIn("code_review_runtime", active)
+
+    def test_normalize_observation_adds_runtime_activation_tag_from_non_read_only_keyword(self):
+        self._patch_pp(
+            lambda: [
+                {
+                    "id": "code_review_runtime",
+                    "activation_tags": ["code_review_trigger"],
+                    "skill": "scribe-workflow-code-review-missing",
+                }
+            ]
+        )
+
+        event = state_events.normalize_observation(
+            {
+                "chat_id": "chat-1",
+                "tool_name": "code_execution_tool",
+                "args_digest": "echo code_review_trigger",
+                "result_digest": "code_review_trigger emitted",
+            }
+        )
+        active = state_events.select_workflows(event, state_events.workflow_ids())
+
+        self.assertIn("code_review_trigger", event["tags"])
+        self.assertIn("code_review_runtime", active)
+
+    def test_normalize_observation_does_not_add_runtime_tag_from_source_read(self):
+        self._patch_pp(
+            lambda: [
+                {
+                    "id": "code_review_runtime",
+                    "activation_tags": ["code_review_trigger"],
+                    "skill": "scribe-workflow-code-review-missing",
+                }
+            ]
+        )
+
+        event = state_events.normalize_observation(
+            {
+                "chat_id": "chat-1",
+                "tool_name": "code_execution_tool",
+                "args_digest": "cat /a0/usr/plugins/a0_scribe/helpers/state_events.py",
+                "result_digest": "activation_tags = ['code_review_trigger']",
+            }
+        )
+        active = state_events.select_workflows(event, state_events.workflow_ids())
+
+        self.assertNotIn("code_review_trigger", event["tags"])
+        self.assertNotIn("code_review_runtime", active)
+
+    def test_fallback_to_scribe_core_is_visible_in_state_items(self):
+        self._patch_pp(
+            lambda: [
+                {
+                    "id": "code_review_runtime",
+                    "activation_tags": ["code_review_trigger"],
+                    "skill": "scribe-workflow-code-review-missing",
+                }
+            ]
+        )
+        event = {
+            "id": 42,
+            "tags": ["code_review_trigger", "tool_call"],
+            "summary": "custom workflow trigger",
+        }
+
+        patch = state_events.session_patch_for_event(event, ["code_review_runtime"])
+        envelope = state_events.build_state_envelope(
+            trigger_event=event,
+            recent_events=[event],
+            session_state={},
+            workflow_states={"code_review_runtime": {"state": {"phase": "active"}}},
+            active_workflows=["code_review_runtime"],
+        )
+
+        self.assertEqual(patch["active_workflows"][0]["skill"], "scribe-core")
+        self.assertIn("warning", patch["active_workflows"][0])
+        self.assertEqual(envelope["active_skills"][0]["skill"], "scribe-core")
+        self.assertIn("warning", envelope["active_skills"][0])
 
 
 if __name__ == "__main__":

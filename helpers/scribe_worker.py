@@ -208,18 +208,14 @@ def _record_state(
             sessions_store.append_event(workspace, state_events.normalize_observation(obs))
             for obs in observations
         ]
-        available = list(state_events.WORKFLOW_TAGS.keys())
-        active: list[str] = []
-        for event in events:
-            for workflow_id in state_events.select_workflows(event, available):
-                if workflow_id not in active:
-                    active.append(workflow_id)
+        available = state_events.workflow_ids()
+        active, trigger_event = _routing_decision(events, available)
         current_state = sessions_store.read_session_state(workspace)
-        if events:
+        if trigger_event:
             sessions_store.merge_session_state(
                 workspace,
                 state_events.session_patch_for_event(
-                    events[-1],
+                    trigger_event,
                     active,
                     existing_active_workflows=current_state.get("active_workflows") or [],
                 ),
@@ -227,13 +223,13 @@ def _record_state(
         workflow_states: dict[str, dict[str, Any]] = {}
         for workflow_id in active:
             sessions_store.merge_workflow_state(
-                workspace, workflow_id, state_events.workflow_patch_for_event(events[-1])
+                workspace, workflow_id, state_events.workflow_patch_for_event(trigger_event)
             )
             workflow_states[workflow_id] = sessions_store.read_workflow_state(
                 workspace, workflow_id
             )
         return state_events.build_state_envelope(
-            trigger_event=events[-1] if events else {},
+            trigger_event=trigger_event or (events[-1] if events else {}),
             recent_events=events,
             session_state=sessions_store.read_session_state(workspace),
             workflow_states=workflow_states,
@@ -242,6 +238,29 @@ def _record_state(
     except Exception as exc:
         log.warning("scribe state recording failed: %s", exc)
         return None
+
+
+def _routing_decision(
+    events: list[dict[str, Any]],
+    available: list[str] | tuple[str, ...],
+    workflow_tags: dict[str, set[str]] | None = None,
+) -> tuple[list[str], dict[str, Any] | None]:
+    active: list[str] = []
+    trigger_event: dict[str, Any] | None = None
+    wf_tags = workflow_tags if workflow_tags is not None else state_events.workflow_tags()
+    for event in events:
+        tags = set(event.get("tags") or [])
+        if "state_audit" in tags:
+            continue
+        event_active: list[str] = []
+        for workflow_id in available:
+            if tags & wf_tags.get(workflow_id, set()):
+                event_active.append(workflow_id)
+                if workflow_id not in active:
+                    active.append(workflow_id)
+        if event_active:
+            trigger_event = event
+    return active, trigger_event
 
 
 def _apply_model_state_patches(
