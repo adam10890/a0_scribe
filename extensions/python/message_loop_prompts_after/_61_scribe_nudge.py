@@ -28,8 +28,6 @@ class ScribeNudge(Extension):
             cfg = load_config(agent=getattr(self, "agent", None))
             if not cfg.get("enabled", True):
                 return
-            if cfg.get("authority_level", "observe") not in ("nudge", "enforce"):
-                return
             if loop_data is None or not hasattr(loop_data, "extras_temporary"):
                 return
 
@@ -38,6 +36,21 @@ class ScribeNudge(Extension):
             if agent is not None and getattr(agent, "context", None) is not None:
                 chat_id = getattr(agent.context, "id", "") or ""
             if not chat_id:
+                return
+
+            state_cfg = cfg.get("state") or {}
+            if bool(state_cfg.get("inject_working_state", True)):
+                try:
+                    from usr.plugins.a0_scribe.helpers import state_prompt
+
+                    prompt = state_prompt.load_for_chat(chat_id)
+                    max_chars = int(state_cfg.get("prompt_max_chars", 2500))
+                    if prompt:
+                        loop_data.extras_temporary["scribe_working_state"] = prompt[:max_chars]
+                except Exception:
+                    pass
+
+            if cfg.get("authority_level", "observe") not in ("nudge", "enforce"):
                 return
 
             limit = int((cfg.get("feedback") or {}).get("inject_max_per_turn", 3))

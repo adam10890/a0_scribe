@@ -23,12 +23,15 @@ import threading
 import time
 from typing import Any, Callable
 
+import yaml
+
 from usr.plugins.a0_scribe.helpers import (
     budget,
     feedback_bus,
     observation_bus,
     pen_paper_writer,
     scribe_client,
+    state_events,
 )
 
 log = logging.getLogger("a0_scribe.worker")
@@ -150,13 +153,20 @@ def _process(batch: list[dict[str, Any]], cfg: dict) -> None:
     for chat_id, observations in by_chat.items():
         if not budget.allow_call(chat_id, max_calls):
             continue
-        messages = _build_prompt(observations, authority)
+        state_envelope = _record_state(chat_id, observations, prefix, prefer_focus)
+        messages = _build_prompt(observations, authority, state_envelope=state_envelope)
         reply = scribe_client.complete(
             messages, max_tokens=max_tokens, temperature=temperature
         )
         if not reply:
             continue
-        section, content, nudge, deviation = _parse_reply(reply, default_section)
+        section, content, nudge, deviation, session_patch, workflow_patches = _parse_reply(
+            reply, default_section
+        )
+        if session_patch or workflow_patches:
+            _apply_model_state_patches(
+                chat_id, session_patch, workflow_patches, prefix, prefer_focus
+            )
 
         if content:
             _write(chat_id, section, content, prefix, prefer_focus)
@@ -181,12 +191,171 @@ def _write(chat_id: str, section: str, content: str, prefix: str, prefer_focus: 
         log.warning("scribe pen&paper write failed: %s", exc)
 
 
-def _build_prompt(observations: list[dict[str, Any]], authority: str) -> list[dict[str, str]]:
+def _record_state(
+    chat_id: str,
+    observations: list[dict[str, Any]],
+    prefix: str,
+    prefer_focus: bool,
+) -> dict[str, Any] | None:
+    try:
+        from usr.plugins.a0_pen_paper.helpers import sessions_store
+
+        workspace = pen_paper_writer.resolve_session(
+            chat_id, prefix=prefix, prefer_focus=prefer_focus
+        )
+        sessions_store.ensure_state_files(workspace, chat_id)
+        events = [
+            sessions_store.append_event(workspace, state_events.normalize_observation(obs))
+            for obs in observations
+        ]
+        available = state_events.workflow_ids()
+        active, trigger_event = _routing_decision(events, available)
+        current_state = sessions_store.read_session_state(workspace)
+        if trigger_event:
+            sessions_store.merge_session_state(
+                workspace,
+                state_events.session_patch_for_event(
+                    trigger_event,
+                    active,
+                    existing_active_workflows=current_state.get("active_workflows") or [],
+                ),
+            )
+        workflow_states: dict[str, dict[str, Any]] = {}
+        for workflow_id in active:
+            sessions_store.merge_workflow_state(
+                workspace, workflow_id, state_events.workflow_patch_for_event(trigger_event)
+            )
+            workflow_states[workflow_id] = sessions_store.read_workflow_state(
+                workspace, workflow_id
+            )
+        return state_events.build_state_envelope(
+            trigger_event=trigger_event or (events[-1] if events else {}),
+            recent_events=events,
+            session_state=sessions_store.read_session_state(workspace),
+            workflow_states=workflow_states,
+            active_workflows=active,
+        )
+    except Exception as exc:
+        log.warning("scribe state recording failed: %s", exc)
+        return None
+
+
+def _routing_decision(
+    events: list[dict[str, Any]],
+    available: list[str] | tuple[str, ...],
+    workflow_tags: dict[str, set[str]] | None = None,
+) -> tuple[list[str], dict[str, Any] | None]:
+    active: list[str] = []
+    trigger_event: dict[str, Any] | None = None
+    wf_tags = workflow_tags if workflow_tags is not None else state_events.workflow_tags()
+    for event in events:
+        tags = set(event.get("tags") or [])
+        if "state_audit" in tags:
+            continue
+        event_active: list[str] = []
+        for workflow_id in available:
+            if tags & wf_tags.get(workflow_id, set()):
+                event_active.append(workflow_id)
+                if workflow_id not in active:
+                    active.append(workflow_id)
+        if event_active:
+            trigger_event = event
+    return active, trigger_event
+
+
+def _apply_model_state_patches(
+    chat_id: str,
+    session_patch: dict[str, Any] | None,
+    workflow_patches: dict[str, Any] | None,
+    prefix: str,
+    prefer_focus: bool,
+) -> None:
+    try:
+        from usr.plugins.a0_pen_paper.helpers import sessions_store
+
+        workspace = pen_paper_writer.resolve_session(
+            chat_id, prefix=prefix, prefer_focus=prefer_focus
+        )
+        if isinstance(session_patch, dict) and session_patch:
+            clean_patch = _sanitize_model_session_patch(session_patch)
+            if clean_patch:
+                sessions_store.merge_session_state(workspace, clean_patch)
+        if isinstance(workflow_patches, dict):
+            state = sessions_store.read_session_state(workspace)
+            active_ids = {
+                str(item.get("id"))
+                for item in state.get("active_workflows") or []
+                if isinstance(item, dict) and item.get("id")
+            }
+            clean_workflow_patches = _filter_model_workflow_patches(
+                workflow_patches, active_ids
+            )
+            for workflow_id, patch in clean_workflow_patches.items():
+                if isinstance(patch, dict):
+                    sessions_store.merge_workflow_state(workspace, str(workflow_id), patch)
+    except Exception as exc:
+        log.warning("scribe model state patch failed: %s", exc)
+
+
+def _sanitize_model_session_patch(patch: dict[str, Any]) -> dict[str, Any]:
+    """Keep deterministic routing fields out of model-authored state patches."""
+    if not isinstance(patch, dict):
+        return {}
+    clean: dict[str, Any] = {}
+    working_set = patch.get("working_set")
+    if isinstance(working_set, dict):
+        clean["working_set"] = {
+            key: value
+            for key, value in working_set.items()
+            if key in {"current_focus", "next_action", "open_questions"}
+        }
+    session = patch.get("session")
+    if isinstance(session, dict):
+        clean["session"] = {
+            key: value
+            for key, value in session.items()
+            if key in {"goal", "status"}
+        }
+    tags = patch.get("tags")
+    if isinstance(tags, dict):
+        clean_tags = {}
+        if isinstance(tags.get("domains"), list):
+            clean_tags["domains"] = tags["domains"]
+        if clean_tags:
+            clean["tags"] = clean_tags
+    return clean
+
+
+def _filter_model_workflow_patches(
+    workflow_patches: dict[str, Any],
+    active_ids: set[str],
+) -> dict[str, Any]:
+    if not isinstance(workflow_patches, dict) or not active_ids:
+        return {}
+    return {
+        str(workflow_id): patch
+        for workflow_id, patch in workflow_patches.items()
+        if str(workflow_id) in active_ids and isinstance(patch, dict)
+    }
+
+
+def _build_prompt(
+    observations: list[dict[str, Any]],
+    authority: str,
+    *,
+    state_envelope: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
     system = _SYSTEM_BASE
     if authority in ("nudge", "enforce"):
         system += _SYSTEM_NUDGE
     if authority == "enforce":
         system += _SYSTEM_ENFORCE
+    system += (
+        "\n\nIf you can update the machine-readable state, you may reply as YAML with "
+        "keys: note: {section, content}, session_patch: {...}, workflow_patches: "
+        "{workflow_id: {...}}, nudge: \"...\", deviation: \"...\". Otherwise use the "
+        "legacy bracketed note format."
+    )
 
     lines = []
     for obs in observations:
@@ -195,13 +364,32 @@ def _build_prompt(observations: list[dict[str, Any]], authority: str) -> list[di
         result = obs.get("result_digest", "")
         lines.append(f"- tool={tool} | args={args} | result={result}")
     log_text = "\n".join(lines)[:6000]
+    state_text = ""
+    if state_envelope:
+        try:
+            state_text = yaml.safe_dump(state_envelope, sort_keys=False, allow_unicode=True)
+        except Exception:
+            state_text = str(state_envelope)
+        state_text = state_text[:12000]
+    content = f"Agent activity log:\n{log_text}"
+    if state_text:
+        content += f"\n\nScribe State Envelope:\n{state_text}"
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"Agent activity log:\n{log_text}"},
+        {"role": "user", "content": content},
     ]
 
 
-def _parse_reply(reply: str, default_section: str) -> tuple[str, str, str | None, str | None]:
+def _parse_reply(
+    reply: str, default_section: str
+) -> tuple[
+    str,
+    str,
+    str | None,
+    str | None,
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
     try:
         from usr.plugins.a0_pen_paper.helpers.sessions_store import VALID_SECTIONS
     except Exception:
@@ -217,6 +405,31 @@ def _parse_reply(reply: str, default_section: str) -> tuple[str, str, str | None
         if text.endswith("```"):
             text = text[: -3]
         text = text.strip()
+
+    try:
+        parsed = yaml.safe_load(text)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict):
+        note = parsed.get("note") if isinstance(parsed.get("note"), dict) else {}
+        section = str(note.get("section") or default_section)
+        if section not in VALID_SECTIONS:
+            section = default_section
+        content = str(note.get("content") or "").strip()
+        nudge = parsed.get("nudge") if isinstance(parsed.get("nudge"), str) else None
+        deviation = (
+            parsed.get("deviation") if isinstance(parsed.get("deviation"), str) else None
+        )
+        session_patch = parsed.get("session_patch")
+        workflow_patches = parsed.get("workflow_patches")
+        return (
+            section,
+            content,
+            nudge.strip() if nudge else None,
+            deviation.strip() if deviation else None,
+            session_patch if isinstance(session_patch, dict) else None,
+            workflow_patches if isinstance(workflow_patches, dict) else None,
+        )
 
     nudge: str | None = None
     deviation: str | None = None
@@ -244,4 +457,4 @@ def _parse_reply(reply: str, default_section: str) -> tuple[str, str, str | None
             if tag in VALID_SECTIONS:
                 section = tag
                 body = body[end + 1:].strip()
-    return section, body, nudge, deviation
+    return section, body, nudge, deviation, None, None

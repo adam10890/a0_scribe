@@ -26,10 +26,19 @@ inject advisory working-state context back into the ego.
 - Event tags must be command/outcome-aware. Do not activate workflows only
   because inspected file contents, paths, or skill names contain words like
   `test`, `error`, `design`, or `verification`.
+- UI-published State-DOX templates may add custom activation tags. `state_events`
+  may add those tags to observations only when they appear as explicit Scribe
+  evidence (`SCRIBE_TAGS:` / `STATE_DOX_TAGS:`) or as exact keywords in
+  non-read-only activity. Source/file inspection output must not activate a
+  custom workflow just because the source contains the tag string.
 - Read-only source/file inspection output is observed content, not a tool
   outcome signal. Do not trigger debugging from words like `Exception`,
   `tool_error`, or `failed` inside inspected source unless the command itself is
   an explicit verification/test command.
+- Reads of State-DOX artifacts (`state/events.jsonl`,
+  `state/session_state.yaml`, `state/workflows/*`) are `state_audit` events.
+  They may be appended to `events.jsonl`, but they must not route workflows or
+  replace the current active workflow focus.
 - When digest output contains `SIGNALS:` excerpts, preserve command context from
   the pre-signal text. Signal excerpts from inspected source code must not
   replace the command metadata used for read-only/verification classification.
@@ -57,7 +66,9 @@ inject advisory working-state context back into the ego.
   `name` and `description`, and keep operation skills separate from workflow
   skills.
 - Workflow skills must stay aligned with `a0_pen_paper`
-  `data/workflow_state_templates/*` `scribe.skill` metadata.
+  `data/workflow_state_templates/*` and UI-published State-DOX `scribe.skill`
+  metadata. Missing declared skills must be visible in state as fallback
+  warnings when Scribe uses `scribe-core`.
 - Agent-facing extensions must stay non-blocking and swallow failures.
 
 ## Verification
@@ -77,4 +88,6 @@ inject advisory working-state context back into the ego.
   budget, observation, feedback, and Pen & Paper adapter helpers.
 - `extensions/AGENTS.md` — Agent Zero hook integration for observe/nudge/enforce
   behavior.
+- `skills/AGENTS.md` — Scribe operation and workflow skill guidance.
+- `tests/AGENTS.md` — state tracking and skill contract tests.
 - `docs/AGENTS.md` — Scribe design notes and future development docs.

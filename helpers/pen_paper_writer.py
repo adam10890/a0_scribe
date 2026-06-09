@@ -23,6 +23,8 @@ def resolve_session(
     exists, otherwise a per-chat scribe session (created on demand)."""
     store = _store()
     name = None
+    safe = "".join(c for c in (chat_id or "session") if c.isalnum() or c in "_-")
+    fallback_name = f"{prefix}_{safe or 'session'}"
     if prefer_focus and chat_id:
         try:
             focus = store.read_focus(chat_id)
@@ -30,9 +32,25 @@ def resolve_session(
                 name = focus.get("workspace")
         except Exception:
             name = None
+    if not name and prefer_focus and chat_id:
+        try:
+            sessions = store.list_sessions(chat_id=chat_id, chat_only=True).get("sessions") or []
+            current = [
+                item.get("name")
+                for item in sessions
+                if isinstance(item, dict) and item.get("is_current_chat") and item.get("name")
+            ]
+            human_named = [
+                item for item in current if str(item) != fallback_name
+            ]
+            if human_named:
+                name = str(human_named[0])
+            elif current:
+                name = str(current[0])
+        except Exception:
+            name = None
     if not name:
-        safe = "".join(c for c in (chat_id or "session") if c.isalnum() or c in "_-")
-        name = f"{prefix}_{safe or 'session'}"
+        name = fallback_name
     try:
         store.ensure_session(name, chat_id)
     except Exception:
