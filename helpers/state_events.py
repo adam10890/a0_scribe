@@ -205,6 +205,23 @@ def _extract_runtime_tags(
     return found
 
 
+# Common secret shapes, masked before anything is queued, prompted or persisted.
+# ponytail: regex list, not a scanner; extend when a new secret shape shows up.
+_SECRET_RES = (
+    (re.compile(r"(?i)(bearer\s+)[a-z0-9._~+/=-]{6,}"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)\b([a-z0-9_]*(?:key|token|secret|passw(?:or)?d)[a-z0-9_]*\s*[=:]\s*)\S+"), r"\1[REDACTED]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "[REDACTED]"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED]"),
+)
+_RESEARCH_TOOLS = {"search_engine", "document_query"}
+
+
+def redact(text: str) -> str:
+    for pattern, repl in _SECRET_RES:
+        text = pattern.sub(repl, text)
+    return text
+
+
 def _compact(value: Any, limit: int = 700) -> str:
     try:
         text = value if isinstance(value, str) else str(value)
@@ -305,21 +322,36 @@ def _is_verification_activity(haystack: str) -> bool:
 def normalize_observation(obs: dict[str, Any]) -> dict[str, Any]:
     """Convert a raw observer payload into a compact tagged event."""
     tool = str(obs.get("tool_name") or "")
-    args = _compact(obs.get("args_digest", ""))
-    result = _compact(obs.get("result_digest", ""))
-    analysis = _analysis_text(obs.get("args_digest", ""), obs.get("result_digest", ""))
-    raw_args = _stringify(obs.get("args_digest", ""))
-    raw_result = _stringify(obs.get("result_digest", ""))
+    raw_args = redact(_stringify(obs.get("args_digest", "")))
+    raw_result = redact(_stringify(obs.get("result_digest", "")))
+    args = _compact(raw_args)
+    result = _compact(raw_result)
+    analysis = _analysis_text(raw_args, raw_result)
     haystack = f"{tool} {analysis}".lower()
     raw_haystack = f"{tool} {raw_args} {raw_result} {analysis}".lower()
 
     tags = {"tool_call"}
-    read_only_inspection = _is_read_only_inspection(haystack)
+    # When the command is known, decide read-only from what the agent asked to run,
+    # not from the output ("bash: /x: No such file" looked like a file listing).
+    command_known = bool(re.search(r"\bcommand\s*[=:]|'command'\s*:", raw_args))
+    read_only_inspection = (
+        _contains_read_only_command(raw_args.lower())
+        if command_known
+        else _is_read_only_inspection(haystack)
+    )
     verification_activity = _is_verification_activity(haystack)
     state_artifact_audit = _is_state_artifact_audit(raw_haystack)
 
+    action = re.search(r"\baction=(\w+)", raw_args)
     if state_artifact_audit:
         tags.add("state_audit")
+    elif tool == "text_editor" and action:  # Agent Zero's native editor
+        if raw_result.strip().lower().startswith("error"):
+            tags.update({"tool_error", "unexpected_behavior"})
+        elif action.group(1).lower() == "read":
+            tags.update({"research", "file_read"})
+        elif action.group(1).lower() in {"write", "patch"}:
+            tags.update({"implementation", "file_change", "code_change"})
     else:
         if (not read_only_inspection or verification_activity) and any(
             token in haystack
@@ -349,11 +381,12 @@ def normalize_observation(obs: dict[str, Any]) -> dict[str, Any]:
         if (
             read_only_inspection
             or ("tool_error" not in tags and _looks_like_file_listing(haystack))
-            or any(token in haystack for token in ("search", "finding"))
+            or tool in _RESEARCH_TOOLS
+            or re.search(r"\b(research|search(?:es|ed|ing)?|findings?)\b", haystack)
         ):
             tags.update({"research", "search", "file_read"})
-        if not read_only_inspection and any(
-            token in haystack for token in ("plan", "design", "architecture", "decision")
+        if not read_only_inspection and re.search(
+            r"\b(plans?|planning|designs?|architecture|decisions?)\b", haystack
         ):
             tags.update({"planning", "decision_candidate"})
         tags.update(

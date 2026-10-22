@@ -70,10 +70,22 @@ inject advisory working-state context back into the ego.
   metadata. Missing declared skills must be visible in state as fallback
   warnings when Scribe uses `scribe-core`.
 - Agent-facing extensions must stay non-blocking and swallow failures.
+- Observations are redacted (`state_events.redact`) in the observer before they
+  are queued, sent to the scribe model, or persisted.
+- Parallel tool jobs are recorded under `_parallel_parent_context_id`, not the
+  throwaway worker context id.
+- Model-authored `workflow_patches` may only touch the `state` mapping, and the
+  ego working-state prompt is framed as untrusted data.
+- The per-chat budget gates only scribe model calls; deterministic event
+  recording always runs.
+- Read-only inspection is decided from the command args when present, not from
+  the tool output. Agent Zero `text_editor` results route by `action`.
 
 ## Verification
 
 - Run `python -m unittest tests.test_state_tracking -v`.
+- Run `python -m unittest tests.test_review_findings -v` when changing
+  observation, routing, redaction, budget, or ego injection.
 - Run `python -m unittest tests.test_skill_contracts -v` when changing Scribe
   skills.
 - Run `python -m py_compile` on touched Python files.

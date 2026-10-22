@@ -130,6 +130,7 @@ class ScribeObserve(Extension):
         try:
             from usr.plugins.a0_scribe.helpers import observation_bus, scribe_worker
             from usr.plugins.a0_scribe.helpers.config import load_config
+            from usr.plugins.a0_scribe.helpers.state_events import redact
 
             cfg = load_config(agent=getattr(self, "agent", None))
             if not cfg.get("enabled", True):
@@ -141,8 +142,15 @@ class ScribeObserve(Extension):
 
             chat_id = ""
             agent = getattr(self, "agent", None)
-            if agent is not None and getattr(agent, "context", None) is not None:
-                chat_id = getattr(agent.context, "id", "") or ""
+            ctx = getattr(agent, "context", None)
+            if ctx is not None:
+                # Parallel tool jobs run in a throwaway worker context; record
+                # them under the chat that launched them.
+                try:
+                    parent = ctx.get_data("_parallel_parent_context_id")
+                except Exception:
+                    parent = None
+                chat_id = str(parent or getattr(ctx, "id", "") or "")
 
             result = getattr(response, "message", response)
 
@@ -151,8 +159,8 @@ class ScribeObserve(Extension):
                     "chat_id": chat_id,
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "tool_name": tool_name,
-                    "args_digest": _args_digest(tool_args, response, agent),
-                    "result_digest": _digest(result),
+                    "args_digest": redact(_args_digest(tool_args, response, agent)),
+                    "result_digest": _digest(redact(result if isinstance(result, str) else str(result))),
                 }
             )
 
