@@ -151,9 +151,10 @@ def _process(batch: list[dict[str, Any]], cfg: dict) -> None:
     cap = int(fcfg.get("max_pending_per_chat", 5))
 
     for chat_id, observations in by_chat.items():
+        # Deterministic recording always runs; the budget only gates the model.
+        state_envelope = _record_state(chat_id, observations, prefix, prefer_focus)
         if not budget.allow_call(chat_id, max_calls):
             continue
-        state_envelope = _record_state(chat_id, observations, prefix, prefer_focus)
         messages = _build_prompt(observations, authority, state_envelope=state_envelope)
         reply = scribe_client.complete(
             messages, max_tokens=max_tokens, temperature=temperature
@@ -252,14 +253,9 @@ def _routing_decision(
         tags = set(event.get("tags") or [])
         if "state_audit" in tags:
             continue
-        event_active: list[str] = []
-        for workflow_id in available:
-            if tags & wf_tags.get(workflow_id, set()):
-                event_active.append(workflow_id)
-                if workflow_id not in active:
-                    active.append(workflow_id)
-        if event_active:
-            trigger_event = event
+        event_active = [w for w in available if tags & wf_tags.get(w, set())]
+        if event_active:  # focus = workflows of the newest meaningful event
+            trigger_event, active = event, event_active
     return active, trigger_event
 
 
@@ -333,9 +329,11 @@ def _filter_model_workflow_patches(
     if not isinstance(workflow_patches, dict) or not active_ids:
         return {}
     return {
-        str(workflow_id): patch
+        str(workflow_id): {"state": patch["state"]}  # model may only touch `state`
         for workflow_id, patch in workflow_patches.items()
-        if str(workflow_id) in active_ids and isinstance(patch, dict)
+        if str(workflow_id) in active_ids
+        and isinstance(patch, dict)
+        and isinstance(patch.get("state"), dict)
     }
 
 
@@ -410,8 +408,16 @@ def _parse_reply(
         parsed = yaml.safe_load(text)
     except Exception:
         parsed = None
-    if isinstance(parsed, dict):
-        note = parsed.get("note") if isinstance(parsed.get("note"), dict) else {}
+    # Only treat YAML as structured when it uses our keys; prose such as
+    # "Ran pytest: 3 failed" is also valid YAML and must not be dropped.
+    if isinstance(parsed, dict) and {"note", "session_patch", "workflow_patches", "nudge", "deviation"} & set(parsed):
+        raw_note = parsed.get("note")
+        if isinstance(raw_note, dict):
+            note = raw_note
+        elif isinstance(raw_note, str):
+            note = {"content": raw_note}
+        else:
+            note = {}
         section = str(note.get("section") or default_section)
         if section not in VALID_SECTIONS:
             section = default_section

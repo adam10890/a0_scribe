@@ -43,7 +43,12 @@ class ScribeNudge(Extension):
                 try:
                     from usr.plugins.a0_scribe.helpers import state_prompt
 
-                    prompt = state_prompt.load_for_chat(chat_id)
+                    scfg = cfg.get("session") or {}
+                    prompt = state_prompt.load_for_chat(
+                        chat_id,
+                        prefix=scfg.get("name_prefix", "scribe"),
+                        prefer_focus=bool(scfg.get("prefer_chat_focus", True)),
+                    )
                     max_chars = int(state_cfg.get("prompt_max_chars", 2500))
                     if prompt:
                         loop_data.extras_temporary["scribe_working_state"] = prompt[:max_chars]

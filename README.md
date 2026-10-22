@@ -152,6 +152,9 @@ start with `scribe_`, such as `scribe_semantic_regression_005`.
   on or off. When `state.inject_working_state` is on (the default), a compact
   read-only working-state block is added to the ego's prompt.
 - **Local & private** — runs on the local GPU via the router; no cloud/API.
+- **Redacted** — common secret shapes (bearer tokens, `*_KEY`/`*TOKEN`/`*SECRET`/
+  `*PASSWORD` values, `sk-…` keys, `AKIA…` ids) are masked before anything is
+  queued, sent to the scribe model, or written to State-DOX.
 - **Budget-capped** — per-chat runaway guard.
 - **Transparent** — every entry is tagged `author="scribe"`, fully auditable.
 - **Kill-switch** — `enabled: false` stops it instantly.
@@ -173,8 +176,8 @@ Every nudge/deviation is also written to Pen & Paper (`author="scribe"`) for aud
 From `usr/plugins/a0_scribe/`:
 
 ```bash
-python -m unittest tests.test_state_tracking tests.test_skill_contracts -v
-python -m py_compile helpers/state_events.py helpers/state_prompt.py helpers/scribe_worker.py helpers/pen_paper_writer.py extensions/python/tool_execute_after/_60_scribe_observe.py
+python -m unittest tests.test_state_tracking tests.test_skill_contracts tests.test_review_findings -v
+python -m py_compile helpers/state_events.py helpers/state_prompt.py helpers/scribe_worker.py helpers/pen_paper_writer.py extensions/python/tool_execute_after/_60_scribe_observe.py extensions/python/message_loop_prompts_after/_61_scribe_nudge.py
 ```
 
 ## Future development
