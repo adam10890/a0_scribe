@@ -2,8 +2,8 @@
 
 agent_init is invoked synchronously, so this handler is a sync ``execute``. It
 idempotently starts the daemon worker thread that drains the observation queue
-continuously while the plugin is enabled. Loaded after a0_lmm_router's _10 init
-(filename _30) so the fleet/router is set up first.
+continuously while the plugin is enabled. Imperium is an external service;
+worker startup does not depend on another Agent Zero router plugin.
 
 Placement: extensions/python/agent_init/_30_scribe_boot.py
 """
