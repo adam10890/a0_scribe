@@ -20,7 +20,7 @@ Unit and contract tests for Scribe State-DOX behavior and skills.
 
 ## Verification
 
-- Run `python -m unittest tests.test_state_tracking tests.test_skill_contracts tests.test_review_findings -v`.
+- Run `python -m unittest tests.test_state_tracking tests.test_skill_contracts tests.test_review_findings tests.test_imperium_client -v`.
 
 ## Child DOX Index
 

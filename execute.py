@@ -1,6 +1,6 @@
 """Standalone smoke test for a0_scribe (Plugin List "Run" button).
 
-Resolves the scribe router role and pings it. Zero Agent Zero dependencies, so
+Checks the pinned Imperium harness model list. No model inference is requested, so
 it can be run directly:
 
     python usr/plugins/a0_scribe/execute.py
@@ -21,14 +21,13 @@ def main() -> int:
     cfg = config.load_config()
     print(
         f"a0_scribe enabled={cfg.get('enabled')} "
-        f"authority={cfg.get('authority_level')} role={cfg.get('model_role')}"
+        f"authority={cfg.get('authority_level')} harness=a0_scribe"
     )
-    result = scribe_client.ping()
-    print("scribe candidate URLs:", result.get("candidates"))
+    result = scribe_client.ping(cfg=cfg)
     if result.get("ok"):
-        print("OK - scribe reply:", (result.get("reply") or "")[:120])
+        print("OK - pinned harness model list is reachable; inference was not tested.")
         return 0
-    print("FAIL - scribe role did not respond. Is the fleet (or scribe container) up?")
+    print("FAIL - pinned harness discovery:", result.get("status"))
     return 1
 
 

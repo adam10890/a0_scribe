@@ -9,8 +9,14 @@ enabled: true
 # enforce  → also flag workflow deviations before tools run (Phase E, soft)
 authority_level: observe
 
-# Router role used for scribe inference (see a0_lmm_router conf).
-model_role: scribe
+# Dedicated, pinned local harness in standalone Imperium. No direct-slot fallback.
+imperium:
+  base_url: http://host.docker.internal:9000/harnesses/a0_scribe/v1
+  api_key_env: IMPERIUM_API_KEY
+  timeout_seconds: 60
+  priority: low
+  circuit_threshold: 3
+  circuit_cooldown_seconds: 120
 
 observe:
   debounce_seconds: 4        # batch the agent's tool calls over this quiet window

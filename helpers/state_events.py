@@ -208,6 +208,8 @@ def _extract_runtime_tags(
 # Common secret shapes, masked before anything is queued, prompted or persisted.
 # ponytail: regex list, not a scanner; extend when a new secret shape shows up.
 _SECRET_RES = (
+    (re.compile(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z]+ )*PRIVATE KEY-----|\Z)"), "[REDACTED]"),
+    (re.compile(r"\b(?:gh[po]_|github_pat_)[A-Za-z0-9_]+"), "[REDACTED]"),
     (re.compile(r"(?i)(bearer\s+)[a-z0-9._~+/=-]{6,}"), r"\1[REDACTED]"),
     (re.compile(r"(?i)\b([a-z0-9_]*(?:key|token|secret|passw(?:or)?d)[a-z0-9_]*\s*[=:]\s*)\S+"), r"\1[REDACTED]"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "[REDACTED]"),
