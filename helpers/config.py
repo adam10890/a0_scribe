@@ -19,7 +19,14 @@ PLUGIN_NAME = "a0_scribe"
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
     "authority_level": "observe",
-    "model_role": "scribe",
+    "imperium": {
+        "base_url": "http://host.docker.internal:9000/harnesses/a0_scribe/v1",
+        "api_key_env": "IMPERIUM_API_KEY",
+        "timeout_seconds": 60,
+        "priority": "low",
+        "circuit_threshold": 3,
+        "circuit_cooldown_seconds": 120,
+    },
     "observe": {
         "debounce_seconds": 4,
         "max_batch": 12,

@@ -1,9 +1,9 @@
 # a0_scribe — the Scribe (Super-Ego)
 
 A background documentation & oversight layer for Agent Zero. A **separate, local
-"scribe" model** — served by `a0_lmm_router` under a dedicated `scribe` role —
+"scribe" model** — served through a pinned local Imperium harness —
 watches the chat agent and **auto-fills `a0_pen_paper` sessions in the
-background**, on local GPU compute, without spending the chat/API budget and
+background**, on local compute, without spending the chat/API budget and
 without relying on the agent to take its own notes.
 
 ## The idea (id / ego / super-ego)
@@ -28,7 +28,7 @@ ego calls a tool
 observation_bus  ── enqueue ──►  scribe_worker (daemon thread, continuous)
                                        │ debounce + batch
                                        ▼
-                                 scribe_client → router role "scribe" (local GPU)
+                                 scribe_client → Imperium /harnesses/a0_scribe/v1
                                        │
                                        ▼
                                  a0_pen_paper session  (author="scribe")
@@ -41,7 +41,7 @@ observation_bus  ── enqueue ──►  scribe_worker (daemon thread, continu
   structured State-DOX events, asks the scribe model to summarize or patch state,
   and writes notes to Pen & Paper.
 - **Client** (`helpers/scribe_client.py`): dependency-light sync HTTP to the
-  `scribe` role, with fallback to the running router.
+  pinned Imperium harness, without host discovery, retries or fallback.
 - **Writer** (`helpers/pen_paper_writer.py`): appends to the chat's focused
   session (or a per-chat `scribe_<id>` session), tagged `author="scribe"`.
 - **State layer** (`helpers/state_events.py`, `helpers/state_prompt.py`):
@@ -52,8 +52,9 @@ observation_bus  ── enqueue ──►  scribe_worker (daemon thread, continu
 
 ## Requirements
 
-- `a0_lmm_router` with the `scribe` role configured (slot `scribe_gpu`, port 8090,
-  `gemma-4-E4B`). See `docker/docker-compose.lmm.scribe.yml` in that plugin.
+- Standalone Imperium 0.13.0 or later, with a dedicated local slot and the
+  `a0_scribe` harness pinned to it. The separate queue does not reserve hardware;
+  evaluate the model and measure contention before enabling daily use.
 - `a0_pen_paper` (provides `sessions_store.ensure_session` / `append_section`).
 
 ## Enable & verify
@@ -184,3 +185,66 @@ python -m py_compile helpers/state_events.py helpers/state_prompt.py helpers/scr
 
 See [docs/FUTURE.md](docs/FUTURE.md) — hard-blocking enforcement (opt-in) and the LMM
 Router multi-container fleet orchestration that scribe will build on.
+
+## Imperium configuration and migration (0.2.0)
+
+The direct 8090-to-chat fallback and `model_role` setting are removed. Install
+Imperium 0.13.0 first, then this client. Back up local plugin/config changes
+before upgrading; preserve all Pen & Paper session data. Configure:
+
+```yaml
+imperium:
+  base_url: http://host.docker.internal:9000/harnesses/a0_scribe/v1
+  api_key_env: IMPERIUM_API_KEY
+  timeout_seconds: 60
+  priority: low
+  circuit_threshold: 3
+  circuit_cooldown_seconds: 120
+```
+
+Use `127.0.0.1` instead of `host.docker.internal` for a host-side worker. Verify
+Docker reachability separately. The URL must select the dedicated harness;
+compatibility model/role hints cannot escape its pin. Supply the router's bearer
+key only through the named environment variable, never YAML. The client ignores
+proxy environment/OS settings and rejects redirects. It sends local-only intent
+and never sends notes to an alternate host when the target fails.
+
+`429 queue_full` skips inference and resets the failure streak. Three consecutive
+other failures open a 120-second circuit; no request leaves during cooldown.
+A single probe after cooldown either recovers or reopens it. Success resets the
+streak. `health()` exposes counters only; `reset()` clears process-local state.
+`ping(cfg=...)` checks `/models` without producing a model note. The Run button
+checks connectivity; it does not certify inference quality or installed hooks.
+The worker always records deterministic events before model budget/network work.
+Malformed/empty replies, auth errors and timeouts produce no fabricated note.
+
+### Validate, update and rollback
+
+Run from this plugin folder inside the `usr/plugins/a0_scribe` layout:
+
+```powershell
+python -m unittest tests.test_state_tracking tests.test_skill_contracts tests.test_review_findings tests.test_imperium_client -v
+python execute.py
+python -m pip list --outdated
+# In an isolated environment after reviewing the update:
+python -m pip install --upgrade PyYAML
+```
+
+There are no new dependencies: Python stdlib plus existing PyYAML. Review updates
+in an isolated environment, upgrade only reviewed packages, then rerun these
+checks and the same synthetic inference. CI uses both Windows and Linux with a
+nested checkout; no live Agent Zero, model or Pen & Paper state is needed.
+For rollback, stop the worker, restore the previous reviewed plugin/config and
+restart its host. Keep the deterministic event history and session files.
+Router rollback follows Imperium's own managed/source procedure. No data schema
+migration or automatic daily activation is performed.
+
+Ready-to-run Agent Zero check (in a disposable test chat):
+
+> Run `python -c "print('SCRIBE_SYNTHETIC: 2 failed; no fix applied')"` as a tool.
+> Inspect the Scribe-authored Pen & Paper event/note. It must preserve that outcome
+> and must not claim tests passed or a fix was applied. Disconnect the Scribe
+> endpoint for a second tool call; the deterministic event must still be recorded.
+
+An isolated worker/model pilot does not prove the installed Agent Zero hooks;
+record that evidence separately before daily activation.

@@ -157,7 +157,7 @@ def _process(batch: list[dict[str, Any]], cfg: dict) -> None:
             continue
         messages = _build_prompt(observations, authority, state_envelope=state_envelope)
         reply = scribe_client.complete(
-            messages, max_tokens=max_tokens, temperature=temperature
+            messages, max_tokens=max_tokens, temperature=temperature, cfg=cfg
         )
         if not reply:
             continue

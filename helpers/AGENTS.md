@@ -22,7 +22,10 @@ adapter code.
 ## Work Guidance
 
 - Keep pure state/event logic testable without Agent Zero runtime.
-- Preserve fallback behavior when Pen & Paper or router integration is missing.
+- Preserve safe deterministic behavior when Pen & Paper or Imperium is missing; never add model/host fallback.
+
+- The worker passes its effective config to the pinned client. Budget gates only inference.
+- The HTTP client ignores proxies, rejects redirects, uses env auth and sanitized counters.
 
 ## Verification
 

@@ -11,7 +11,7 @@ inject advisory working-state context back into the ego.
 - This folder is plugin source for the live Agent Zero install.
 - Do not store runtime session data in this plugin. Runtime state belongs in the
   resolved `a0_pen_paper` session under `state/`.
-- Keep model calls local-only through the `a0_lmm_router` `scribe` role.
+- Keep model calls local-only through the standalone Imperium `a0_scribe` pinned harness.
 - Scribe failures must never break the ego's tool or message loop.
 
 ## Local Contracts
@@ -80,6 +80,10 @@ inject advisory working-state context back into the ego.
   recording always runs.
 - Read-only inspection is decided from the command args when present, not from
   the tool output. Agent Zero `text_editor` results route by `action`.
+
+- The client uses one configured harness URL, no redirects, proxies or fallback.
+- Busy/failing inference never suppresses deterministic event recording.
+- Client diagnostics contain counters/status codes only, never content or keys.
 
 ## Verification
 
